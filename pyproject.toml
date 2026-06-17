@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scoreboarding"
+version = "0.1.0"
+description = "Pure-Python cycle-exact simulator of Thornton's Scoreboarding (CDC 6600) in-order dynamic scheduling, with structural, WAR, and WAW hazard detection and per-instruction traces for computer architecture education."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Amaar Chughtai" }]
+keywords = [
+  "computer-architecture", "scoreboarding", "cpu-simulator", "pipeline",
+  "hazards", "education", "cdc-6600", "in-order", "instruction-scheduling",
+  "simulation",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Education",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Education",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.scripts]
+scoreboarding = "scoreboarding.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "hatchling>=1.25"]
+
+[project.urls]
+Homepage = "https://github.com/amaar-mc/scoreboarding"
+Repository = "https://github.com/amaar-mc/scoreboarding"
+Issues = "https://github.com/amaar-mc/scoreboarding/issues"
+Changelog = "https://github.com/amaar-mc/scoreboarding/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scoreboarding"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+files = ["src"]
