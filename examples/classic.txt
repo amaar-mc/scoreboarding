@@ -1,0 +1,16 @@
+# Classic CDC 6600 floating-point scheduling example
+# Adapted from Thornton's Scoreboarding description.
+#
+# Functional unit declarations: FU <name> <kind> <latency>
+FU Load1 load 2
+FU Mult1 mult 10
+FU Add1  add  2
+FU Div1  div  40
+
+# Instructions: <op> <dest>, <src1>[, <src2>]
+LD   F6, R2
+LD   F2, R3
+MULT F0, F2, F4
+SUB  F8, F6, F2
+DIV  F10, F0, F6
+ADD  F6, F8, F2
