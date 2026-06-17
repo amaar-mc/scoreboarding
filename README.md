@@ -1,5 +1,9 @@
 # scoreboarding
 
+<p align="center">
+  <img src="assets/logo.png" alt="scoreboarding logo" width="160">
+</p>
+
 Pure-Python cycle-exact simulator of Thornton's **Scoreboarding** algorithm,
 as implemented in the CDC 6600 (1964). Designed for computer architecture
 education: readable source, zero runtime dependencies, and per-instruction
