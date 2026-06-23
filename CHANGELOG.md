@@ -21,7 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   simulation termination, and error handling.
 - `examples/classic.txt` -- the classic CDC 6600 floating-point scheduling example.
 - CI on Python 3.10, 3.11, 3.12, 3.13 via GitHub Actions.
-- PyPI release pending (package-upload quota exhausted at release time; will follow).
 
 [Unreleased]: https://github.com/amaar-mc/scoreboarding/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/amaar-mc/scoreboarding/releases/tag/v0.1.0

@@ -9,9 +9,6 @@ as implemented in the CDC 6600 (1964). Designed for computer architecture
 education: readable source, zero runtime dependencies, and per-instruction
 cycle-number traces.
 
-> PyPI publish pending (package-upload quota). `pip install scoreboarding`
-> will work once the first release is live. Install from source in the meantime.
-
 ---
 
 ## What is Scoreboarding?
