@@ -6,14 +6,20 @@ Lines starting with '#' or blank lines are ignored.
 
 Functional unit declarations (must come before instructions)::
 
-    FU <name> <kind> <latency>
+    FU <name> <kind> <latency> [pipelined|unpipelined]
+
+The optional fifth token controls the execute pipeline. It defaults to
+``unpipelined`` (the classic CDC 6600 scoreboard): the unit stays busy from
+Issue until Write Result, so a same-kind successor cannot issue to it until the
+occupying instruction writes back. A ``pipelined`` unit frees its issue slot once
+the occupying instruction reads operands, shortening the structural stall.
 
 Example::
 
     FU Load1 load 2
-    FU Mult1 mult 10
+    FU Mult1 mult 10 pipelined
     FU Add1  add  2
-    FU Div1  div  40
+    FU Div1  div  40 unpipelined
 
 Instruction lines::
 
@@ -64,9 +70,11 @@ def _parse_program(text: str) -> tuple[list[FunctionalUnit], list[Instruction]]:
 
         if line.upper().startswith("FU "):
             parts = line.split()
-            if len(parts) != 4:
+            if len(parts) not in (4, 5):
                 raise ValueError(
-                    f"FU declaration must be 'FU <name> <kind> <latency>', got: {line!r}"
+                    "FU declaration must be "
+                    "'FU <name> <kind> <latency> [pipelined|unpipelined]', "
+                    f"got: {line!r}"
                 )
             try:
                 latency = int(parts[3])
@@ -74,8 +82,23 @@ def _parse_program(text: str) -> tuple[list[FunctionalUnit], list[Instruction]]:
                 raise ValueError(
                     f"FU latency must be an integer, got: {parts[3]!r}"
                 ) from None
+            if len(parts) == 5:
+                flag = parts[4].lower()
+                if flag not in ("pipelined", "unpipelined"):
+                    raise ValueError(
+                        "FU pipelined flag must be 'pipelined' or 'unpipelined', "
+                        f"got: {parts[4]!r}"
+                    )
+                pipelined = flag == "pipelined"
+            else:
+                pipelined = False
             functional_units.append(
-                FunctionalUnit(name=parts[1], kind=parts[2].lower(), latency=latency)
+                FunctionalUnit(
+                    name=parts[1],
+                    kind=parts[2].lower(),
+                    latency=latency,
+                    pipelined=pipelined,
+                )
             )
             continue
 

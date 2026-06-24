@@ -52,6 +52,7 @@ class _SimInstruction:
     program_index: int
     status: InstructionStatus = field(default_factory=InstructionStatus)
     fu_name: str = ""  # which FU was assigned at issue
+    execute_start: int | None = None  # cycle execution began for THIS instruction
 
 
 def _op_kind(op: str) -> str:
@@ -112,6 +113,13 @@ def run(
         fu.name: FunctionalUnitStatus() for fu in functional_units
     }
     fu_latency: dict[str, int] = {fu.name: fu.latency for fu in functional_units}
+    fu_pipelined: dict[str, bool] = {fu.name: fu.pipelined for fu in functional_units}
+
+    # Free-for-issue flag per FU. An unpipelined unit is occupied (False) from
+    # Issue until Write Result. A pipelined unit becomes free again the cycle
+    # after the occupying instruction reads operands and enters the execute
+    # pipeline, so a same-kind successor may issue to it sooner.
+    fu_free: dict[str, bool] = {fu.name: True for fu in functional_units}
 
     # Register-result-status table: maps register name -> FU name that will write it.
     # None means no pending write (register holds its committed value).
@@ -180,22 +188,32 @@ def run(
             if register_result.get(dest) == si.fu_name:
                 register_result[dest] = None
 
-            # Update Qj/Qk of any waiting instruction that depended on this FU.
+            # Update Qj/Qk of any waiting instruction that depended on this
+            # instruction's result. The dependency is keyed by FU name in the
+            # classic model, but a pipelined FU can hold several in-flight
+            # instructions sharing one name, so we also require the waiting
+            # instruction's source register to equal this instruction's
+            # destination -- the actual producer-consumer link.
             for other in sim_instrs:
                 if other.status.issue is None or other.status.read_operands is not None:
                     continue
                 fu_other = fu_status.get(other.fu_name)
                 if fu_other is None:
                     continue
-                if fu_other.qj == si.fu_name:
+                if fu_other.qj == si.fu_name and fu_other.fj == dest:
                     fu_other.qj = None
                     fu_other.rj = True
-                if fu_other.qk == si.fu_name:
+                if fu_other.qk == si.fu_name and fu_other.fk == dest:
                     fu_other.qk = None
                     fu_other.rk = True
 
-            # Free the functional unit.
-            fu_status[si.fu_name].reset()
+            # Free the functional unit for issue. A pipelined unit was already
+            # released for issue when this instruction read operands; only reset
+            # the shared status row if it still belongs to this instruction (a
+            # newer instruction may have reused a pipelined row already).
+            fu_free[si.fu_name] = True
+            if fu_status[si.fu_name].fi == dest and fu_status[si.fu_name].op == si.instruction.op:
+                fu_status[si.fu_name].reset()
 
         # --- READ OPERANDS ---
         # An instruction reads operands when both sources are ready.
@@ -211,18 +229,27 @@ def run(
                 # Mark operands as consumed (rj=rk=False) so WAR tracking works.
                 fu_st.rj = False
                 fu_st.rk = False
+                # A pipelined unit releases its issue slot now that this
+                # instruction has read its operands and entered the execute
+                # pipeline; a successor may issue to it next cycle.
+                if fu_pipelined[si.fu_name]:
+                    fu_free[si.fu_name] = True
 
         # --- EXECUTE COMPLETE ---
         # Mark execute_complete when the latency has elapsed since execute_start.
         for si in sim_instrs:
             if si.status.read_operands is None or si.status.execute_complete is not None:
                 continue
-            fu_st = fu_status[si.fu_name]
-            # Start executing the cycle after read-operands.
-            if fu_st.execute_start is None and si.status.read_operands < cycle:
-                fu_st.execute_start = si.status.read_operands + 1
-            if fu_st.execute_start is not None:
-                elapsed = cycle - fu_st.execute_start + 1
+            # Start executing the cycle after read-operands. Execution timing is
+            # tracked per instruction (not on the shared FU row) so a pipelined
+            # unit can hold several in-flight instructions correctly.
+            if si.execute_start is None and si.status.read_operands < cycle:
+                si.execute_start = si.status.read_operands + 1
+                # Mirror onto the FU row for snapshots while the row is this
+                # instruction's (unpipelined units keep it for their lifetime).
+                fu_status[si.fu_name].execute_start = si.execute_start
+            if si.execute_start is not None:
+                elapsed = cycle - si.execute_start + 1
                 if elapsed >= fu_latency[si.fu_name]:
                     si.status.execute_complete = cycle
 
@@ -233,10 +260,13 @@ def run(
             instr = si.instruction
             kind = _op_kind(instr.op)
 
-            # Find a free FU of the right kind.
+            # Find a free FU of the right kind. A unit is free for issue when its
+            # fu_free flag is set: unpipelined units clear it from Issue until
+            # Write Result; pipelined units clear it only until the occupying
+            # instruction has read operands.
             candidate_fu: str | None = None
             for fu in functional_units:
-                if fu.kind == kind and not fu_status[fu.name].busy:
+                if fu.kind == kind and fu_free[fu.name]:
                     candidate_fu = fu.name
                     break
 
@@ -260,10 +290,15 @@ def run(
                     si.fu_name = candidate_fu
                     next_to_issue += 1
 
+                    # Occupy the issue slot. Released at read-operands (pipelined)
+                    # or at write-result (unpipelined).
+                    fu_free[candidate_fu] = False
+
                     fu_st = fu_status[candidate_fu]
                     fu_st.busy = True
                     fu_st.op = instr.op
                     fu_st.fi = instr.dest
+                    fu_st.execute_start = None
 
                     # Source 1 (fj).
                     fu_st.fj = instr.src1

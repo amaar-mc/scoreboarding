@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scoreboarding"
-version = "0.1.0"
+version = "0.2.0"
 description = "Pure-Python cycle-exact simulator of Thornton's Scoreboarding (CDC 6600) in-order dynamic scheduling, with structural, WAR, and WAW hazard detection and per-instruction traces for computer architecture education."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,8 +12,8 @@ license = { file = "LICENSE" }
 authors = [{ name = "Amaar Chughtai" }]
 keywords = [
   "computer-architecture", "scoreboarding", "cpu-simulator", "pipeline",
-  "hazards", "education", "cdc-6600", "in-order", "instruction-scheduling",
-  "simulation",
+  "pipelined", "hazards", "education", "cdc-6600", "in-order",
+  "instruction-scheduling", "simulation",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",

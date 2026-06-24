@@ -48,8 +48,11 @@ or `None` if no pending write exists (the register holds its committed value).
 
 An instruction may issue to a functional unit in the current cycle only if:
 
-1. **No structural hazard**: the required functional unit (`kind` matching `op`) is
-   not currently busy (its `busy` flag is False).
+1. **No structural hazard**: at least one functional unit of the required `kind`
+   (matching `op`) is free to accept a new instruction. An unpipelined unit is free
+   only when idle (busy from Issue until Write Result); a pipelined unit is free as
+   soon as its current occupant has read operands (see *Pipelined functional units*
+   below).
 2. **No WAW hazard**: no currently-active instruction (issued but not yet at
    WriteResult) is writing the same destination register.
 
@@ -103,6 +106,32 @@ Once the WAR check passes:
 - The `Qj`/`Qk` fields of any other instruction that listed this FU as a producer
   are cleared (set to None), and their `Rj`/`Rk` flags are set to True.
 - The functional unit is freed (all fields reset to idle).
+
+## Pipelined Functional Units
+
+Each `FunctionalUnit` carries a `pipelined` flag that controls how long it acts as a
+structural hazard.
+
+- **Unpipelined** (`pipelined=False`): the classic CDC 6600 behaviour. The unit is
+  occupied for its whole lifetime, from Issue until Write Result. A second
+  instruction of the same kind cannot issue to it until the first writes back. This
+  is the conservative model in which the latency cycles are not overlapped across
+  instructions.
+- **Pipelined** (`pipelined=True`): the unit releases its issue slot the cycle the
+  occupying instruction reads operands and enters the execute pipeline. A same-kind
+  successor may then issue while the earlier instruction is still executing. The
+  deep execute pipeline holds each in-flight instruction's result independently.
+
+Only the **structural** stall at Issue changes; RAW (Read Operands), WAR (Write
+Result), and WAW (Issue) checks are identical for both kinds of unit.
+
+Because a pipelined unit can hold several in-flight instructions that share one
+physical row in the Functional Unit Status table, execution timing is tracked per
+instruction rather than on the shared row, and the result broadcast at Write Result
+wakes a waiting consumer only when the producer's destination register matches the
+consumer's source register (not merely when the producing FU names match). This keeps
+the simulation cycle-exact when multiple in-flight instructions share a pipelined
+unit's name.
 
 ## Hazard Summary
 

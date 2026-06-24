@@ -19,11 +19,20 @@ class FunctionalUnit:
         name: Unique identifier, e.g. "Add1", "Mult1", "Load1".
         kind: Operation class this unit handles, e.g. "add", "mult", "load", "div".
         latency: Number of cycles the execute stage occupies (>= 1).
+        pipelined: Whether the unit's execute stage is pipelined. An unpipelined
+            unit (False) is a structural hazard for its whole lifetime: it stays
+            busy from Issue until Write Result, so a same-kind successor cannot
+            issue to it until the occupying instruction writes back -- the classic
+            CDC 6600 scoreboard behaviour. A pipelined unit (True) accepts a new
+            instruction once the occupying instruction has read its operands and
+            entered the execute pipeline, so the structural stall is shorter while
+            the deep execute pipeline still holds the in-flight result.
     """
 
     name: str
     kind: str
     latency: int
+    pipelined: bool
 
     def __post_init__(self) -> None:
         if self.latency < 1:

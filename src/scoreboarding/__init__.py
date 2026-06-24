@@ -9,10 +9,10 @@ Example::
     from scoreboarding import FunctionalUnit, Instruction, run, render_trace
 
     fus = [
-        FunctionalUnit(name="Load1", kind="load", latency=2),
-        FunctionalUnit(name="Mult1", kind="mult", latency=10),
-        FunctionalUnit(name="Add1",  kind="add",  latency=2),
-        FunctionalUnit(name="Div1",  kind="div",  latency=40),
+        FunctionalUnit(name="Load1", kind="load", latency=2, pipelined=False),
+        FunctionalUnit(name="Mult1", kind="mult", latency=10, pipelined=False),
+        FunctionalUnit(name="Add1",  kind="add",  latency=2, pipelined=False),
+        FunctionalUnit(name="Div1",  kind="div",  latency=40, pipelined=False),
     ]
     program = [
         Instruction(op="LD",   dest="F6",  src1="R2",  src2=""),

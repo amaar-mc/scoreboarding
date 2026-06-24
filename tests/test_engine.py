@@ -162,10 +162,10 @@ from scoreboarding import FunctionalUnit, Instruction, run
 def _classic_fus() -> list[FunctionalUnit]:
     """Four FUs matching the classic CDC 6600 floating-point example."""
     return [
-        FunctionalUnit(name="Load1", kind="load", latency=2),
-        FunctionalUnit(name="Mult1", kind="mult", latency=10),
-        FunctionalUnit(name="Add1", kind="add", latency=2),
-        FunctionalUnit(name="Div1", kind="div", latency=40),
+        FunctionalUnit(name="Load1", kind="load", latency=2, pipelined=False),
+        FunctionalUnit(name="Mult1", kind="mult", latency=10, pipelined=False),
+        FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False),
+        FunctionalUnit(name="Div1", kind="div", latency=40, pipelined=False),
     ]
 
 
@@ -265,7 +265,7 @@ class TestInOrderIssue:
 
     def test_single_fu_type_issues_in_order(self) -> None:
         """With a single Add FU, three ADD instructions must issue strictly in order."""
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=3)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=3, pipelined=False)]
         prog = [
             Instruction(op="ADD", dest="F0", src1="R0", src2="R1"),
             Instruction(op="ADD", dest="F2", src1="R2", src2="R3"),
@@ -286,7 +286,7 @@ class TestStructuralStall:
 
     def test_two_loads_one_unit(self) -> None:
         """With one Load FU, LD F2 cannot issue until LD F6 finishes WriteResult."""
-        fus = [FunctionalUnit(name="Load1", kind="load", latency=2)]
+        fus = [FunctionalUnit(name="Load1", kind="load", latency=2, pipelined=False)]
         prog = [
             Instruction(op="LD", dest="F6", src1="R1", src2=""),
             Instruction(op="LD", dest="F2", src1="R2", src2=""),
@@ -310,6 +310,136 @@ class TestStructuralStall:
 
 
 # ---------------------------------------------------------------------------
+# Pipelined vs unpipelined functional units
+# ---------------------------------------------------------------------------
+
+
+class TestPipelinedFunctionalUnits:
+    """A pipelined unit frees its issue slot at ReadOperands, not WriteResult.
+
+    Back-to-back independent ops of the same kind on a single physical unit::
+
+        FU Mult1 mult latency=4 (pipelined or unpipelined)
+        [0] MULT F0, R0, R1
+        [1] MULT F2, R2, R3
+
+    Pipelined hand-derivation::
+
+        C1  ISSUE [0]      Mult1 free -> occupy. RegResult[F0]=Mult1.
+        C2  READ OPS [0]   reads at 2, execute_start=3, pipelined -> Mult1 free.
+            ISSUE [1]      Mult1 free (released this cycle) -> issue at 2.
+        C3  READ OPS [1]   reads at 3, execute_start=4.
+        C6  EXEC COMP [0]  3+4-1 = 6.
+        C7  WRITE [0]=7.   EXEC COMP [1] 4+4-1 = 7.
+        C8  WRITE [1]=8.
+
+        [0]: issue=1 ro=2 ec=6 wr=7
+        [1]: issue=2 ro=3 ec=7 wr=8   total=8
+
+    Unpipelined, [1] cannot issue until [0] writes back at cycle 7::
+
+        [1]: issue=7 ro=8 ec=12 wr=13  total=13
+    """
+
+    def _two_independent_mults(self) -> list[Instruction]:
+        return [
+            Instruction(op="MULT", dest="F0", src1="R0", src2="R1"),
+            Instruction(op="MULT", dest="F2", src1="R2", src2="R3"),
+        ]
+
+    def test_pipelined_back_to_back_issue(self) -> None:
+        fus = [FunctionalUnit(name="Mult1", kind="mult", latency=4, pipelined=True)]
+        trace = run(self._two_independent_mults(), functional_units=fus)
+        r0, r1 = trace.results
+        assert (r0.issue, r0.read_operands, r0.execute_complete, r0.write_result) == (1, 2, 6, 7)
+        assert (r1.issue, r1.read_operands, r1.execute_complete, r1.write_result) == (2, 3, 7, 8)
+        assert trace.total_cycles == 8
+
+    def test_unpipelined_back_to_back_structural_stall(self) -> None:
+        fus = [FunctionalUnit(name="Mult1", kind="mult", latency=4, pipelined=False)]
+        trace = run(self._two_independent_mults(), functional_units=fus)
+        r0, r1 = trace.results
+        assert (r0.issue, r0.read_operands, r0.execute_complete, r0.write_result) == (1, 2, 6, 7)
+        # Second MULT stalls at Issue until the first writes back (cycle 7).
+        assert (r1.issue, r1.read_operands, r1.execute_complete, r1.write_result) == (7, 8, 12, 13)
+        assert trace.total_cycles == 13
+
+    def test_pipelined_issues_earlier_than_unpipelined(self) -> None:
+        prog = self._two_independent_mults()
+        pip = run(
+            prog,
+            functional_units=[FunctionalUnit(name="M", kind="mult", latency=4, pipelined=True)],
+        )
+        unp = run(
+            prog,
+            functional_units=[FunctionalUnit(name="M", kind="mult", latency=4, pipelined=False)],
+        )
+        assert pip.results[1].issue < unp.results[1].issue
+        assert pip.total_cycles < unp.total_cycles
+
+    def test_pipelined_three_deep_loads(self) -> None:
+        """Three independent loads on one pipelined Load unit issue one per cycle."""
+        fus = [FunctionalUnit(name="Load1", kind="load", latency=2, pipelined=True)]
+        prog = [
+            Instruction(op="LD", dest="F0", src1="R0", src2=""),
+            Instruction(op="LD", dest="F2", src1="R1", src2=""),
+            Instruction(op="LD", dest="F4", src1="R2", src2=""),
+        ]
+        trace = run(prog, functional_units=fus)
+        r0, r1, r2 = trace.results
+        assert (r0.issue, r0.read_operands, r0.execute_complete, r0.write_result) == (1, 2, 4, 5)
+        assert (r1.issue, r1.read_operands, r1.execute_complete, r1.write_result) == (2, 3, 5, 6)
+        assert (r2.issue, r2.read_operands, r2.execute_complete, r2.write_result) == (3, 4, 6, 7)
+        assert trace.total_cycles == 7
+
+    def test_pipelined_raw_disambiguation_by_destination(self) -> None:
+        """Two in-flight ops share a pipelined FU name; a RAW dependent must
+        wake on the correct producer, not whichever finishes first.
+
+        Mult1 (pipelined) holds [0] producing F0 and [1] producing F2. ADD reads
+        F2 (from [1]), so it must read operands at cycle 8 (when [1] writes), not
+        cycle 7 (when [0] writes F0).
+        """
+        fus = [
+            FunctionalUnit(name="Mult1", kind="mult", latency=4, pipelined=True),
+            FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False),
+        ]
+        prog = [
+            Instruction(op="MULT", dest="F0", src1="R0", src2="R1"),
+            Instruction(op="MULT", dest="F2", src1="R2", src2="R3"),
+            Instruction(op="ADD", dest="F4", src1="F2", src2="R5"),
+        ]
+        trace = run(prog, functional_units=fus)
+        r_m0, r_m1, r_add = trace.results
+        assert r_m0.write_result == 7
+        assert r_m1.write_result == 8
+        # ADD reads F2 the cycle [1] writes it (8), not the cycle [0] writes F0 (7).
+        assert r_add.read_operands == 8
+        assert (r_add.execute_complete, r_add.write_result) == (10, 11)
+
+    def test_pipelined_relaxes_classic_load_contention(self) -> None:
+        """Pipelining only relaxes the structural stall; with no same-kind
+        contention the classic golden trace is unchanged, but the pipelined Load
+        unit lets LD F2 issue at cycle 2 instead of 5."""
+        prog = _classic_program()
+        unp = run(prog, functional_units=_classic_fus())
+        pip = run(
+            prog,
+            functional_units=[
+                FunctionalUnit(name="Load1", kind="load", latency=2, pipelined=True),
+                FunctionalUnit(name="Mult1", kind="mult", latency=10, pipelined=True),
+                FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=True),
+                FunctionalUnit(name="Div1", kind="div", latency=40, pipelined=True),
+            ],
+        )
+        # Unpipelined Load1 stays busy until LD F6 writes back (cycle 5).
+        assert unp.results[1].issue == 5
+        # Pipelined Load1 is released once LD F6 reads operands (cycle 2), and
+        # Issue runs after Read Operands within the cycle, so LD F2 issues at 2.
+        assert pip.results[1].issue == 2
+
+
+# ---------------------------------------------------------------------------
 # WAW hazard stalls Issue
 # ---------------------------------------------------------------------------
 
@@ -320,8 +450,8 @@ class TestWAWHazard:
     def test_waw_stalls_second_mult(self) -> None:
         """Two MULT instructions writing F0 with separate Mult FUs -- second stalls for WAW."""
         fus = [
-            FunctionalUnit(name="Mult1", kind="mult", latency=5),
-            FunctionalUnit(name="Mult2", kind="mult", latency=5),
+            FunctionalUnit(name="Mult1", kind="mult", latency=5, pipelined=False),
+            FunctionalUnit(name="Mult2", kind="mult", latency=5, pipelined=False),
         ]
         prog = [
             # Both write F0 -- WAW hazard.
@@ -338,7 +468,7 @@ class TestWAWHazard:
 
     def test_waw_with_one_mult_fu(self) -> None:
         """With one Mult FU, both structural and WAW block the second instruction."""
-        fus = [FunctionalUnit(name="Mult1", kind="mult", latency=4)]
+        fus = [FunctionalUnit(name="Mult1", kind="mult", latency=4, pipelined=False)]
         prog = [
             Instruction(op="MULT", dest="F0", src1="R0", src2="R1"),
             Instruction(op="MULT", dest="F0", src1="R2", src2="R3"),
@@ -352,8 +482,8 @@ class TestWAWHazard:
     def test_different_dest_no_waw_stall(self) -> None:
         """Two MULTs to different destinations must NOT stall due to WAW."""
         fus = [
-            FunctionalUnit(name="Mult1", kind="mult", latency=5),
-            FunctionalUnit(name="Mult2", kind="mult", latency=5),
+            FunctionalUnit(name="Mult1", kind="mult", latency=5, pipelined=False),
+            FunctionalUnit(name="Mult2", kind="mult", latency=5, pipelined=False),
         ]
         prog = [
             Instruction(op="MULT", dest="F0", src1="R1", src2="R2"),
@@ -377,8 +507,8 @@ class TestRAWHazard:
     def test_raw_delays_read_operands(self) -> None:
         """ADD reads F0 only after MULT writes F0."""
         fus = [
-            FunctionalUnit(name="Mult1", kind="mult", latency=5),
-            FunctionalUnit(name="Add1", kind="add", latency=2),
+            FunctionalUnit(name="Mult1", kind="mult", latency=5, pipelined=False),
+            FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False),
         ]
         prog = [
             Instruction(op="MULT", dest="F0", src1="R1", src2="R2"),
@@ -399,7 +529,7 @@ class TestRAWHazard:
 
     def test_no_raw_both_read_immediately(self) -> None:
         """When no RAW exists, ReadOperands follows immediately after Issue."""
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         prog = [Instruction(op="ADD", dest="F0", src1="R0", src2="R1")]
         trace = run(prog, functional_units=fus)
         r = trace.results[0]
@@ -430,9 +560,9 @@ class TestWARHazard:
         DIV has consumed F6 at cycle 13. ADD F6 WriteResult = 14.
         """
         fus = [
-            FunctionalUnit(name="Mult1", kind="mult", latency=10),
-            FunctionalUnit(name="Div1", kind="div", latency=5),
-            FunctionalUnit(name="Add1", kind="add", latency=2),
+            FunctionalUnit(name="Mult1", kind="mult", latency=10, pipelined=False),
+            FunctionalUnit(name="Div1", kind="div", latency=5, pipelined=False),
+            FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False),
         ]
         prog = [
             Instruction(op="MULT", dest="F0", src1="R1", src2="R2"),
@@ -463,7 +593,7 @@ class TestWARHazard:
 
     def test_no_war_when_no_earlier_reader(self) -> None:
         """If no earlier instruction reads the destination, WriteResult is immediate."""
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         prog = [Instruction(op="ADD", dest="F0", src1="R0", src2="R1")]
         trace = run(prog, functional_units=fus)
         r = trace.results[0]
@@ -480,13 +610,13 @@ class TestTermination:
     """Simulation must always terminate for valid inputs."""
 
     def test_empty_program(self) -> None:
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         trace = run([], functional_units=fus)
         assert trace.results == []
         assert trace.total_cycles == 0
 
     def test_single_instruction(self) -> None:
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=3)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=3, pipelined=False)]
         prog = [Instruction(op="ADD", dest="F0", src1="R0", src2="R1")]
         trace = run(prog, functional_units=fus)
         assert len(trace.results) == 1
@@ -527,13 +657,13 @@ class TestSnapshots:
     """capture_snapshots=True must produce one snapshot per cycle."""
 
     def test_snapshot_count(self) -> None:
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         prog = [Instruction(op="ADD", dest="F0", src1="R0", src2="R1")]
         trace = run(prog, functional_units=fus, capture_snapshots=True)
         assert len(trace.snapshots) == trace.total_cycles
 
     def test_snapshots_disabled_by_default(self) -> None:
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         prog = [Instruction(op="ADD", dest="F0", src1="R0", src2="R1")]
         trace = run(prog, functional_units=fus)
         assert trace.snapshots == []
@@ -548,15 +678,15 @@ class TestErrors:
     """Invalid inputs must raise ValueError with descriptive messages."""
 
     def test_unknown_fu_kind_raises(self) -> None:
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         prog = [Instruction(op="MULT", dest="F0", src1="R0", src2="R1")]
         with pytest.raises(ValueError, match="mult"):
             run(prog, functional_units=fus)
 
     def test_fu_latency_zero_raises(self) -> None:
         with pytest.raises(ValueError, match="latency"):
-            FunctionalUnit(name="Add1", kind="add", latency=0)
+            FunctionalUnit(name="Add1", kind="add", latency=0, pipelined=False)
 
     def test_fu_latency_negative_raises(self) -> None:
         with pytest.raises(ValueError, match="latency"):
-            FunctionalUnit(name="Add1", kind="add", latency=-3)
+            FunctionalUnit(name="Add1", kind="add", latency=-3, pipelined=False)

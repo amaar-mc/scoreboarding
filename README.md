@@ -24,7 +24,7 @@ any register renaming.
 
 | Stage | What happens | Hazard checked |
 |---|---|---|
-| **Issue** | Assign instruction to a free FU | Structural (FU busy) + WAW (another active insn writes same dest) |
+| **Issue** | Assign instruction to a free FU | Structural (no free FU of the kind) + WAW (another active insn writes same dest) |
 | **Read Operands** | Read both source registers | RAW (stall until producing FU has written result) |
 | **Execute** | Occupy the FU for its full latency | -- |
 | **Write Result** | Commit result to register file, free FU | WAR (stall until every earlier reader has read its operand) |
@@ -34,6 +34,32 @@ any register renaming.
 1. **Instruction Status** -- per-instruction cycle stamps (Issue / ReadOperands / ExecuteComplete / WriteResult).
 2. **Functional Unit Status** -- per-FU: busy flag, op, destination (Fi), sources (Fj, Fk), producing FUs (Qj, Qk), ready flags (Rj, Rk).
 3. **Register Result Status** -- which FU will next write each register (None once written).
+
+### Pipelined vs unpipelined functional units
+
+Each `FunctionalUnit` declares whether its execute stage is `pipelined`.
+
+- **Unpipelined** (`pipelined=False`, the classic CDC 6600 default): the unit is a
+  structural hazard for its entire lifetime. It stays busy from Issue through Write
+  Result, so a same-kind successor cannot issue to it until the occupying
+  instruction has written its result. This is the original scoreboard behaviour.
+- **Pipelined** (`pipelined=True`): the unit frees its issue slot as soon as the
+  occupying instruction has read its operands and entered the execute pipeline. A
+  same-kind successor can then issue the next cycle while the deep execute pipeline
+  still carries the earlier result. The structural stall is shorter; RAW, WAR, and
+  WAW hazards are unaffected.
+
+For example, two independent back-to-back multiplies on a single `latency=4`
+multiply unit:
+
+| | Unpipelined | Pipelined |
+|---|---|---|
+| MULT #1 issue / write | 1 / 7 | 1 / 7 |
+| MULT #2 issue / write | 7 / 13 | 2 / 8 |
+| Total cycles | 13 | 8 |
+
+The pipelined unit issues the second multiply at cycle 2 (right after the first
+reads operands) instead of waiting until cycle 7 for the first to write back.
 
 ### How it differs from Tomasulo
 
@@ -71,10 +97,10 @@ uv pip install -e ".[dev]"
 from scoreboarding import FunctionalUnit, Instruction, run, render_trace
 
 fus = [
-    FunctionalUnit(name="Load1", kind="load", latency=2),
-    FunctionalUnit(name="Mult1", kind="mult", latency=10),
-    FunctionalUnit(name="Add1",  kind="add",  latency=2),
-    FunctionalUnit(name="Div1",  kind="div",  latency=40),
+    FunctionalUnit(name="Load1", kind="load", latency=2,  pipelined=False),
+    FunctionalUnit(name="Mult1", kind="mult", latency=10, pipelined=False),
+    FunctionalUnit(name="Add1",  kind="add",  latency=2,  pipelined=False),
+    FunctionalUnit(name="Div1",  kind="div",  latency=40, pipelined=False),
 ]
 
 program = [
@@ -123,10 +149,11 @@ Program file format:
 
 ```
 # Comments start with #
+# FU <name> <kind> <latency> [pipelined|unpipelined]   (default: unpipelined)
 FU Load1 load 2
-FU Mult1 mult 10
+FU Mult1 mult 10 pipelined
 FU Add1  add  2
-FU Div1  div  40
+FU Div1  div  40 unpipelined
 
 LD   F6, R2
 LD   F2, R3

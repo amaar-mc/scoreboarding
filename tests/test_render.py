@@ -14,7 +14,7 @@ class TestRenderTrace:
         assert "empty" in output.lower()
 
     def test_output_contains_header_columns(self) -> None:
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         prog = [Instruction(op="ADD", dest="F0", src1="R0", src2="R1")]
         trace = run(prog, functional_units=fus)
         output = render_trace(trace)
@@ -24,7 +24,7 @@ class TestRenderTrace:
         assert "WriteResult" in output
 
     def test_output_contains_instruction_text(self) -> None:
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         prog = [Instruction(op="ADD", dest="F0", src1="R0", src2="R1")]
         trace = run(prog, functional_units=fus)
         output = render_trace(trace)
@@ -32,7 +32,7 @@ class TestRenderTrace:
         assert "F0" in output
 
     def test_output_contains_total_cycles(self) -> None:
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         prog = [Instruction(op="ADD", dest="F0", src1="R0", src2="R1")]
         trace = run(prog, functional_units=fus)
         output = render_trace(trace)
@@ -40,7 +40,7 @@ class TestRenderTrace:
         assert str(trace.total_cycles) in output
 
     def test_single_source_instruction_no_trailing_comma(self) -> None:
-        fus = [FunctionalUnit(name="Load1", kind="load", latency=2)]
+        fus = [FunctionalUnit(name="Load1", kind="load", latency=2, pipelined=False)]
         prog = [Instruction(op="LD", dest="F6", src1="R2", src2="")]
         trace = run(prog, functional_units=fus)
         output = render_trace(trace)
@@ -48,7 +48,7 @@ class TestRenderTrace:
         assert "R2," not in output.split("LD")[1].split("\n")[0]
 
     def test_render_returns_string(self) -> None:
-        fus = [FunctionalUnit(name="Add1", kind="add", latency=2)]
+        fus = [FunctionalUnit(name="Add1", kind="add", latency=2, pipelined=False)]
         prog = [Instruction(op="ADD", dest="F0", src1="R0", src2="R1")]
         trace = run(prog, functional_units=fus)
         output = render_trace(trace)

@@ -53,6 +53,26 @@ class TestParseProgramText:
         assert len(fus) == 1
         assert len(instrs) == 1
 
+    def test_parse_fu_defaults_unpipelined(self) -> None:
+        fus, _ = _parse_program("FU Add1 add 2\nADD F0, R0, R1")
+        assert fus[0].pipelined is False
+
+    def test_parse_fu_pipelined_flag(self) -> None:
+        fus, _ = _parse_program("FU Mult1 mult 10 pipelined\nMULT F0, R0, R1")
+        assert fus[0].pipelined is True
+
+    def test_parse_fu_unpipelined_flag(self) -> None:
+        fus, _ = _parse_program("FU Mult1 mult 10 unpipelined\nMULT F0, R0, R1")
+        assert fus[0].pipelined is False
+
+    def test_invalid_pipelined_flag_raises(self) -> None:
+        with pytest.raises(ValueError, match="pipelined flag"):
+            _parse_program("FU Mult1 mult 10 sometimes")
+
+    def test_too_many_fu_tokens_raises(self) -> None:
+        with pytest.raises(ValueError, match="FU declaration"):
+            _parse_program("FU Mult1 mult 10 pipelined extra")
+
     def test_invalid_fu_declaration_raises(self) -> None:
         with pytest.raises(ValueError, match="FU declaration"):
             _parse_program("FU Add1 add")
